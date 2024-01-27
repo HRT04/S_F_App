@@ -1,0 +1,283 @@
+import * as THREE from "three";
+export default THREE;
+import useLogger from "./logger";
+import { Rocket } from "./Rocket";
+import { loadModel_seiza, loadModel_terminal } from "./Loader_Data";
+import { GLTFLoader } from "three/examples/jsm/Addons.js";
+import { createLights } from "./Lights";
+import Font from "./font/Rounded Mplus 1c Medium_Regular.json";
+import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
+import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
+import { useWebAR } from "./WebAR";
+import {
+  flyParticle,
+  particleArray,
+  dropParticle,
+  Particle,
+  launchsmoke,
+} from "./Particle";
+import { dspResult } from "./color";
+
+const log = useLogger();
+let num: number,
+  Time: number = 0,
+  Gra: number = 0.00098,
+  bound: number,
+  bound_top: number = 0.47,
+  f: number = 0; // 星座アニメーションフラグ
+const Tenzyo: number = 200; // 天井位置
+function Num(n: number, p: any) {
+  if (p < 0.25) {
+    n = 0.0006;
+  } else if (p < 0.28) {
+    n = 0.0009;
+  } else if (p < 0.33) {
+    n = 0.002;
+  } else if (p < 0.5) {
+    n = 0.013;
+  } else if (p < 5) {
+    n = 0.03;
+  } else if (p < 9) {
+    n = 0.2;
+  } else if (p < 13) {
+    n = 0.6;
+  } else if (p < 18) {
+    n = 1.0;
+  } else if (p < 20) {
+    n = 1.5;
+  } else if (p < Tenzyo) {
+    n = 60.0;
+  } else {
+    n = 0;
+  }
+  return n;
+}
+export interface ARScene {
+  makeObjectTree(): THREE.Object3D;
+
+  animate(): void;
+  seizanimate(): void;
+
+  name(): string;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject
+  ): void;
+}
+
+export class TestScene implements ARScene {
+  rocket?: Rocket;
+  seiza?: THREE.Object3D;
+  rocketBase?: THREE.Object3D;
+  scene?: any;
+  planeMesh?: any;
+  camera?: any;
+  cameraPosition?: any;
+  count?: number;
+  Text?: string;
+
+  name() {
+    return "test";
+  }
+  makeObjectTree(): THREE.Object3D {
+    // log.info("make object tree", this.name())
+    // const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1).translate(0, 0.05, 0);
+
+    // const material = new THREE.MeshPhongMaterial({
+    //   color: 0xffffff * Math.random(),
+    // });
+
+    let count = 0;
+    this.count = count;
+
+    // ロケットの色取得
+    const webARInstance = useWebAR();
+    const color_string = webARInstance.get_color_num.cn;
+    const glbpath = webARInstance.get_color_num.pth;
+    const Text = webARInstance.get_color_num.cltext;
+    this.Text = Text;
+    let cameraPosition = new THREE.Vector3();
+    let camera = webARInstance.camera;
+    this.cameraPosition = cameraPosition;
+    this.camera = camera;
+
+    // scene作成
+    const scene: THREE.Scene = new THREE.Scene();
+    this.scene = scene;
+
+    // ロケット
+    const rocket = new Rocket(color_string);
+    this.rocket = rocket;
+    this.rocket.mesh.scale.set(0.0005, 0.0005, 0.0005);
+    this.rocket.mesh.position.set(0, 0.2, 0);
+    this.scene.add(this.rocket.mesh);
+
+    const grnd: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+    const grnd_seiza: THREE.Vector3 = new THREE.Vector3(0, Tenzyo, 0);
+    // 発射台読み込み
+    loadModel_terminal(
+      scene,
+      new GLTFLoader(),
+      grnd,
+      "./glb/terminal.glb",
+      0.035
+    );
+    // テキストページ(平面)
+    // 平面の作成
+    const planeGeometry = new THREE.PlaneGeometry(1.0, 0.5);
+
+    // マテリアルの設定
+    const material_page = new THREE.MeshBasicMaterial({
+      color: 0x7fffd4,
+      alphaTest: 0.8,
+      transparent: true,
+    });
+    // 平面とテキストのメッシュ
+    const planeMesh = new THREE.Mesh(planeGeometry, material_page);
+    this.planeMesh = planeMesh;
+
+    // 説明文
+    const loader = new FontLoader();
+    const font = loader.parse(Font);
+    if (this.Text) {
+      const textGeometry = new TextGeometry(this.Text, {
+        font: font,
+        size: 0.02,
+        height: 0.01,
+        curveSegments: 16,
+      });
+      textGeometry.center(); // 中央寄せ
+      const material_text = new THREE.MeshLambertMaterial({
+        color: 0x000000,
+      });
+      const textMesh = new THREE.Mesh(textGeometry, material_text);
+      this.planeMesh.add(textMesh); // 平面上にテキストを配置
+      // テキストをAR空間内に配置
+      if (this.seiza) this.planeMesh.position.set(0, this.seiza.position.y, 0); // 必要に応じて位置を調整
+      this.planeMesh.visible = false;
+      this.planeMesh.scale.set(0.5, 0.5, 0.5);
+      this.scene.add(this.planeMesh);
+    }
+    // seiza読み込み
+    if (glbpath) {
+      loadModel_seiza(new GLTFLoader(), grnd_seiza, glbpath, 0.005).then(
+        (loadedModel) => {
+          this.seiza = loadedModel;
+          this.seiza.visible = false;
+          this.seiza.position.y = Tenzyo;
+          // this.seiza.position.z = -1.0;
+          this.seiza.rotation.x = Math.PI / 2;
+          this.seiza.castShadow = false;
+          this.seiza.receiveShadow = false;
+          // this.seiza.rotation.z = Math.PI;
+          this.scene.add(this.seiza);
+        }
+      );
+    }
+
+    createLights(this.scene);
+
+    return this.scene;
+  }
+  private updateListeners: ((event: any) => void)[] = [];
+
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject
+  ): void {
+    if (type === "update" && typeof listener === "function") {
+      this.updateListeners.push(listener as (event: any) => void);
+    }
+  }
+
+  animate(): boolean | void {
+    if (!this.rocket) return;
+    if (!this.scene) return;
+
+    num = Num(num, this.rocket.mesh.position.y);
+
+    this.rocket.mesh.position.y += num;
+    this.rocket.mesh.rotation.x = Math.random() * Math.sin(1) * 0.03;
+    this.rocket.mesh.rotation.z = Math.random() * Math.sin(1) * 0.03;
+
+    let p = getParticle(this.rocket, this.scene);
+    setTimeout(() => {
+      if (!this.scene) return;
+      create_Smoke(p, this.rocket, this.scene);
+      createFlyingParticles(p, this.rocket, this.scene);
+    }, 2000);
+    create_launchSmoke(p, this.rocket, this.scene);
+    if (Tenzyo <= this.rocket.mesh.position.y) {
+      if (!this.seiza) return;
+      this.rocket.mesh.visible = false;
+      this.seiza.visible = true;
+
+      this.planeMesh.visible = true;
+
+      // falseを返す
+      return false;
+    }
+    return true;
+  }
+
+  seizanimate(): void {
+    if (!this.seiza) return;
+    this.planeMesh.position.y = this.seiza.position.y + 0.5;
+    if (this.seiza.position.y < 0.2) {
+      bound = 0.022;
+      this.seiza.position.y = 0.2;
+      if (bound_top <= 0.2001) {
+        f = 3;
+      } else {
+        f = 1;
+      }
+    }
+    if (f == 0) {
+      if (70 < this.seiza.position.y) {
+        Time += 4.0;
+      } else {
+        Time = 30;
+      }
+
+      this.seiza.position.y -= (1 / 2) * Gra * Math.pow(Time, 2);
+    } else if (f == 1) {
+      this.seiza.position.y += bound;
+      if (bound_top / 2 < this.seiza.position.y) {
+        bound = bound * 0.98;
+      }
+      if (bound_top < this.seiza.position.y) {
+        f = 2;
+        bound_top = (bound_top * 3) / 4;
+      }
+    } else if (f == 2) {
+      this.seiza.position.y -= bound;
+      if (bound_top / 2 < this.seiza.position.y) {
+        bound = bound * 1.02;
+      }
+    } else {
+      this.seiza.rotation.z += 0.01;
+      this.camera.getWorldPosition(this.cameraPosition);
+      this.planeMesh.lookAt(this.cameraPosition);
+    }
+  }
+}
+const getParticle = (rocket: any, scene: THREE.Scene) => {
+  let p: any;
+  if (particleArray.length > 0) {
+    p = particleArray.pop();
+  } else {
+    p = new Particle(rocket, scene);
+  }
+  return p;
+};
+const create_Smoke = (p: any, rocket: any, scene: THREE.Scene) => {
+  dropParticle(p, rocket, scene);
+};
+const createFlyingParticles = (p: any, rocket: any, scene: THREE.Scene) => {
+  flyParticle(p, scene);
+};
+
+const create_launchSmoke = (p: any, rocket: any, scene: THREE.Scene) => {
+  launchsmoke(p, rocket, scene);
+  launchsmoke(p, rocket, scene);
+};
